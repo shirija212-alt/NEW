@@ -1,0 +1,84 @@
+⚡ SYSTEM INSTRUCTION:
+You are an autonomous developer assistant. The user’s repo is the exact project prototype. Your job is to upgrade the scam-detection system so that when given inputs (phone number, URL, SMS text, file hash or filename, email), the API returns an accurate classification (labels: scam / likely scam / suspicious / benign) with a confidence score and short, human-readable reasoning. Do everything within Replit free-tier limits (low memory, short CPU bursts) and use the provided PostgreSQL Neon database for lookups and lightweight model storage.
+
+GOALS (do all):
+1. Implement a hybrid classifier combining:
+   a) Deterministic heuristics & blacklist lookups (fast, low-cost).
+   b) A small, efficient ML model (logistic regression or small XGBoost/lightgbm with quantized weights) trained on feature vectors from the Neon DB or synthetic data if insufficent records.
+   c) A balanced fusion layer that merges heuristic score and ML score into a final label and confidence.
+
+2. Add or update the FastAPI endpoints:
+   - POST /analyze/phone  -> {input_phone, output: label, confidence, reasons[]}
+   - POST /analyze/url
+   - POST /analyze/sms
+   - POST /analyze/file
+   - GET /health
+
+   Endpoints must:
+   - Return JSON with `label`, `confidence` (0.00-1.00), `explain` (array of reasons), and `used_methods` (["heuristic","ml","lookup"]).
+   - Be deterministic and reproducible given the same DB state and seed.
+
+3. Use this DB connection string exactly (do not change):
+   psql 'postgresql://neondb_owner:npg_5tSjdc6UwfzH@ep-little-wind-a87drvos-pooler.eastus2.azure.neon.tech/neondb?sslmode=require&channel_binding=require'
+
+   - Create/ensure two tables: `blacklist` (type, value, added_at, trust_score) and `training_data` (id, type, input_raw, label, created_at, features JSON).
+   - If training_data is small, synthesize simple labeled examples and store them (with clear flag `is_synthetic=true`) then train.
+
+4. Keep everything small & Replit-friendly:
+   - Use scikit-learn (logistic regression or small random forest) and persist model with joblib.
+   - If scikit-learn is not allowed on Replit free, implement a tiny logistic regression from numpy and store coefficients in JSON.
+   - Do NOT use large LLMs locally. If you want to use an LLM for explanations, call an external API only if the user provides API credits — otherwise produce rule-based explanations.
+
+5. Accuracy improvements (phone example):
+   - Phone feature set must include:
+     * country_code (parsed), number_length
+     * presence_in_blacklist (boolean)
+     * known_short_code (boolean)
+     * odd_prefixes (e.g., "1900", "900") high-risk
+     * recent_report_count (lookup from `blacklist` or `reports` table)
+     * pattern_score (regex for repeated digits, suspicious separators)
+     * WHOIS-like or operator checks if available (optional)
+   - Heuristics must produce a heuristic_score (0-1).
+   - ML model produces ml_score (0-1).
+   - Fusion rule: final_score = 0.5*heuristic_score + 0.5*ml_score by default. Provide config for balanced/hybrid/all modes:
+       a) "heuristic" => final_score = heuristic_score
+       b) "ml" => final_score = ml_score
+       c) "balanced" => 0.5/0.5
+       d) "hybrid" => weighted by `trust_score` from the DB (e.g., final = w1*h + w2*m where w1 depends on trust of blacklists)
+
+6. Testing & verification:
+   - Provide unit tests for phone analyzer (pytest), with 10+ test cases covering obvious scam numbers, benign numbers, borderline numbers.
+   - Provide a simple local test script `test_manual.sh` to call endpoints and print results.
+
+7. Git & Replit details:
+   - Ensure remote is origin -> https://github.com/shirija212-alt/NEW.git
+   - If remote name exists, update URL `git remote set-url origin https://github.com/shirija212-alt/NEW.git`
+   - Create a commit with message: "upgrade: hybrid scam classifier + endpoints + tests"
+   - Push to `main`.
+
+8. Resource limits & optimizations for Replit free:
+   - Limit model size < 5 MB persisted.
+   - Keep dependencies minimal: `fastapi`, `uvicorn`, `psycopg2-binary` or `asyncpg`, `scikit-learn` (or pure-numpy fallback), `joblib`.
+   - Use connection pooling and close cursors.
+   - Avoid background training jobs that exceed CPU/time — train once at startup if needed.
+
+9. Deliverables in repo root:
+   - `app/` with FastAPI app
+   - `app/analyzers.py` (heuristic + ml + fusion)
+   - `app/db.py` (DB helpers)
+   - `app/models.py` (serialization)
+   - `app/train.py` (train or synthesize)
+   - `tests/` with pytest tests
+   - `README.md` with exact steps to run on Replit free and how to configure modes (heuristic/ml/balanced/hybrid)
+
+10. FINAL OUTPUT:
+    - After making changes, run the test script and include the test output in the final message.
+    - Provide exact commands you ran to commit & push and the `git` output confirming push success.
+    - Provide an example API call for phone with sample input and the exact JSON response produced.
+
+SECURITY & PRIVACY:
+- Do not commit secrets; keep DB string usage only in a secure env var `DATABASE_URL`. If you must use the given string for tests, put it in `.replit.env` and add instructions to `.gitignore`.
+- If any file > 10MB would be created, do not commit it.
+
+START IMMEDIATELY and show step-by-step output of each command, tests, and the final API response for this test input:
+{ "phone": "+1-900-555-0199", "mode": "balanced" }
